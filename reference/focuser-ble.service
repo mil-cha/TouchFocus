@@ -1,0 +1,14 @@
+[Unit]
+Description=TouchFocus BLE bridge
+After=bluetooth.service focuserd.service
+Requires=bluetooth.service focuserd.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/stellarmate/focuser_ble.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

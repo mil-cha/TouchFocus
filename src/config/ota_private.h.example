@@ -1,0 +1,5 @@
+#pragma once
+
+// Copy this file to ota_private.h and choose a private OTA password.
+// ota_private.h is ignored by Git and must never be committed.
+#define TOUCHFOCUS_OTA_PASSWORD "replace-with-a-private-password"
