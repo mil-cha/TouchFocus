@@ -1,7 +1,8 @@
 # TouchFocus legacy focuserd protocol
 
-This document records the protocol implemented by `reference/Handcontrol.ino`
-and `reference/focuserd.py`. It describes current behavior, including known
+This document records the legacy handcontroller protocol analyzed during
+TouchFocus development and the behavior of `reference/focuserd.py`. It
+describes current behavior, including known
 limitations, rather than proposing a replacement protocol.
 
 ## Endpoints

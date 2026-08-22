@@ -123,7 +123,6 @@ Files in `reference/`:
 - `focuser_ble.py` — BLE GATT-to-UDP bridge; it never accesses GPIO
 - `focuser-ble.service` — systemd unit for the BLE bridge
 - `focuserd.pyold` — preserved historical backup
-- `Handcontrol.ino` — original handcontroller used for protocol compatibility
 
 The reference daemon uses the existing Raspberry Pi wiring and `gpiochip4`.
 Check all pins against your own hardware and back up a working daemon before
