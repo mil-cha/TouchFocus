@@ -9,7 +9,7 @@ limitations, rather than proposing a replacement protocol.
 
 | Direction | Transport | Endpoint | Purpose |
 |---|---|---|---|
-| Handcontroller to daemon | UDP/JSON | `192.168.88.240:40000` | Commands and ping |
+| Handcontroller to daemon | UDP/JSON | configurable IP, default `192.168.88.240:40000` | Commands and ping |
 | Daemon to handcontroller | UDP broadcast/JSON | `192.168.88.255:40001` | Position every 200 ms |
 | Local INDI/clients | TCP/text | `127.0.0.1:7625` | Separate protocol, not used by TouchFocus |
 
@@ -33,6 +33,11 @@ All fields are JSON numbers. Extra `joyx` and `sw` fields are accepted.
 | `{"preset":N}` | TouchFocus: move to preset P1-P9 |
 | `{"save_preset":N}` | TouchFocus: save current position to P1-P9 |
 | `{"ping":1}` | Reply to sender with `{"pong":1}` |
+
+TouchFocus can also send the same ping to the broadcast address calculated
+from its DHCP address and subnet mask. The source address of the first valid
+pong becomes the saved daemon address. This discovery adds no new command and
+does not change compatibility with existing clients.
 
 The handcontroller maps joystick magnitude 1..6 to finite command sizes
 2, 5, 10, 20, 50 and 100 steps and intends to repeat them every 40 ms. Its

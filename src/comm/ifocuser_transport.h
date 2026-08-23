@@ -29,6 +29,11 @@ public:
     virtual void poll() = 0;
     virtual bool sendCommand(const char *json) = 0;
     virtual const FocuserStatus &status() const = 0;
+    virtual bool startDiscovery() { return false; }
+    virtual bool discoveryRunning() const { return false; }
+    virtual bool discoveryFound() const { return false; }
+    virtual IPAddress discoveredHost() const { return IPAddress(); }
+    virtual uint32_t discoveryRevision() const { return 0; }
 };
 
 }  // namespace touchfocus

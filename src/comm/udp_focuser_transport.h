@@ -19,6 +19,11 @@ public:
     const FocuserStatus &status() const override { return status_; }
     void setHost(const IPAddress &host);
     IPAddress host() const { return host_; }
+    bool startDiscovery() override;
+    bool discoveryRunning() const override { return discovery_running_; }
+    bool discoveryFound() const override { return discovery_found_; }
+    IPAddress discoveredHost() const override { return discovered_host_; }
+    uint32_t discoveryRevision() const override { return discovery_revision_; }
 
 private:
     void startSocketsIfNeeded();
@@ -34,6 +39,13 @@ private:
     FocuserStatus status_;
     bool sockets_started_ = false;
     uint32_t last_ping_ms_ = 0;
+    bool sendDiscoveryPing();
+    bool discovery_running_ = false;
+    bool discovery_found_ = false;
+    IPAddress discovered_host_;
+    uint32_t discovery_started_ms_ = 0;
+    uint32_t last_discovery_ping_ms_ = 0;
+    uint32_t discovery_revision_ = 0;
 };
 
 }  // namespace touchfocus

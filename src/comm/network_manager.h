@@ -17,6 +17,8 @@ public:
     bool isConnected() const;
     String ssid() const;
     String localIp() const;
+    IPAddress localIpAddress() const;
+    IPAddress subnetMask() const;
     int32_t rssi() const;
 
     int16_t startScan(bool show_hidden = true);

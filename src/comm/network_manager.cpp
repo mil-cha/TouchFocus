@@ -44,6 +44,16 @@ String NetworkManager::localIp() const
     return WiFi.localIP().toString();
 }
 
+IPAddress NetworkManager::localIpAddress() const
+{
+    return WiFi.localIP();
+}
+
+IPAddress NetworkManager::subnetMask() const
+{
+    return WiFi.subnetMask();
+}
+
 int32_t NetworkManager::rssi() const
 {
     return WiFi.RSSI();

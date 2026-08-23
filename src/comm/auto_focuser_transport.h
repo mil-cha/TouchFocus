@@ -11,5 +11,10 @@ public:
  void poll() override { wifi_.poll(); ble_.poll(); }
  bool sendCommand(const char *j) override { return ble_.isReady() ? ble_.sendCommand(j) : wifi_.sendCommand(j); }
  const FocuserStatus &status() const override { return ble_.status().connected ? ble_.status() : wifi_.status(); }
+ bool startDiscovery() override { return wifi_.startDiscovery(); }
+ bool discoveryRunning() const override { return wifi_.discoveryRunning(); }
+ bool discoveryFound() const override { return wifi_.discoveryFound(); }
+ IPAddress discoveredHost() const override { return wifi_.discoveredHost(); }
+ uint32_t discoveryRevision() const override { return wifi_.discoveryRevision(); }
 private: IFocuserTransport &wifi_; BleFocuserTransport &ble_;
 }; }

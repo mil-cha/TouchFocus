@@ -155,6 +155,7 @@ String saved_wifi_password;
 String pending_wifi_ssid;
 String pending_wifi_password;
 String saved_focuser_ip = "192.168.88.240";
+uint32_t discovery_revision_seen = 0;
 
 void load_wifi_credentials()
 {
@@ -885,6 +886,22 @@ void start_wifi_scan(lv_event_t *event)
     }
 }
 
+void find_focuser(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
+    if (!network.isConnected()) {
+        set_wifi_status("Connect Wi-Fi before discovery", lv_color_hex(0xFFB454));
+        return;
+    }
+    if (focuser.discoveryRunning()) return;
+    discovery_revision_seen = focuser.discoveryRevision();
+    if (focuser.findFocuser()) {
+        set_wifi_status("Searching for focuserd...", lv_color_hex(0xFFB454));
+    } else {
+        set_wifi_status("Could not start discovery", lv_color_hex(0xFF7B72));
+    }
+}
+
 void connect_wifi(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || wifi_connecting) return;
@@ -944,6 +961,20 @@ void hide_wifi_keyboard(lv_event_t *event)
 
 void wifi_poll(lv_timer_t *)
 {
+    const uint32_t discovery_revision = focuser.discoveryRevision();
+    if (discovery_revision != discovery_revision_seen) {
+        discovery_revision_seen = discovery_revision;
+        if (focuser.discoveryFound()) {
+            const String found_ip = focuser.discoveredHost().toString();
+            lv_textarea_set_text(focuser_ip_field, found_ip.c_str());
+            apply_and_save_focuser_ip();
+            String message = "Focuser found: " + found_ip;
+            set_wifi_status(message.c_str(), lv_color_hex(0x56D364));
+        } else {
+            set_wifi_status("No focuserd found", lv_color_hex(0xFF7B72));
+        }
+    }
+
     if (wifi_scan_running) {
         const int16_t count = network.scanComplete();
         if (count >= 0) {
@@ -1433,22 +1464,33 @@ void build_settings_screen()
     lv_textarea_set_one_line(focuser_ip_field, true);
     lv_textarea_set_max_length(focuser_ip_field, 15);
     lv_textarea_set_text(focuser_ip_field, saved_focuser_ip.c_str());
-    lv_obj_set_size(focuser_ip_field, 230, 58);
+    lv_obj_set_size(focuser_ip_field, 196, 58);
     lv_obj_align(focuser_ip_field, LV_ALIGN_TOP_LEFT, 24, 382);
     lv_obj_set_style_text_font(focuser_ip_field, &lv_font_montserrat_16, 0);
     lv_obj_add_event_cb(focuser_ip_field, show_wifi_keyboard,
                         LV_EVENT_FOCUSED, nullptr);
 
+    lv_obj_t *find_button = lv_btn_create(settings_screen);
+    lv_obj_set_size(find_button, 98, 58);
+    lv_obj_align(find_button, LV_ALIGN_TOP_LEFT, 228, 382);
+    lv_obj_set_style_radius(find_button, 12, 0);
+    lv_obj_set_style_bg_color(find_button, lv_color_hex(0x263D52), 0);
+    lv_obj_add_event_cb(find_button, find_focuser, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *find_label = lv_label_create(find_button);
+    lv_label_set_text(find_label, "FIND");
+    lv_obj_set_style_text_font(find_label, &lv_font_montserrat_16, 0);
+    lv_obj_center(find_label);
+
     lv_obj_t *connect_button = lv_btn_create(settings_screen);
-    lv_obj_set_size(connect_button, 178, 58);
+    lv_obj_set_size(connect_button, 116, 58);
     lv_obj_align(connect_button, LV_ALIGN_TOP_RIGHT, -24, 382);
     lv_obj_set_style_radius(connect_button, 12, 0);
     lv_obj_set_style_bg_color(connect_button, lv_color_hex(0x276749), 0);
     lv_obj_add_event_cb(connect_button, connect_wifi, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *connect_label = lv_label_create(connect_button);
-    lv_label_set_text(connect_label, "Connect");
-    lv_obj_set_style_text_font(connect_label, &lv_font_montserrat_20, 0);
+    lv_label_set_text(connect_label, "CONNECT");
+    lv_obj_set_style_text_font(connect_label, &lv_font_montserrat_14, 0);
     lv_obj_center(connect_label);
 
     wifi_status = lv_label_create(settings_screen);

@@ -34,6 +34,43 @@ void UdpFocuserTransport::setHost(const IPAddress &host)
                   host_.toString().c_str(), config::FOCUSER_COMMAND_PORT);
 }
 
+bool UdpFocuserTransport::sendDiscoveryPing()
+{
+    if (!sockets_started_) return false;
+    const uint32_t ip = static_cast<uint32_t>(network_.localIpAddress());
+    const uint32_t mask = static_cast<uint32_t>(network_.subnetMask());
+    const IPAddress broadcast((ip & mask) | ~mask);
+    static constexpr char ping[] = "{\"ping\":1}";
+    if (!command_udp_.beginPacket(broadcast, config::FOCUSER_COMMAND_PORT)) {
+        return false;
+    }
+    command_udp_.write(reinterpret_cast<const uint8_t *>(ping), strlen(ping));
+    const bool sent = command_udp_.endPacket() == 1;
+    if (sent) {
+        Serial.printf("[FocuserUDP] Discovery ping to %s:%u\n",
+                      broadcast.toString().c_str(), config::FOCUSER_COMMAND_PORT);
+    }
+    return sent;
+}
+
+bool UdpFocuserTransport::startDiscovery()
+{
+    if (!network_.isConnected()) return false;
+    startSocketsIfNeeded();
+    if (!sockets_started_) return false;
+    discovery_running_ = true;
+    discovery_found_ = false;
+    discovered_host_ = IPAddress();
+    discovery_started_ms_ = millis();
+    last_discovery_ping_ms_ = discovery_started_ms_;
+    if (!sendDiscoveryPing()) {
+        discovery_running_ = false;
+        ++discovery_revision_;
+        return false;
+    }
+    return true;
+}
+
 void UdpFocuserTransport::begin()
 {
     startSocketsIfNeeded();
@@ -122,11 +159,21 @@ void UdpFocuserTransport::receiveStatus()
 void UdpFocuserTransport::receiveCommandReply()
 {
     while (command_udp_.parsePacket() > 0) {
+        const IPAddress sender = command_udp_.remoteIP();
         char buffer[320];
         const int length = command_udp_.read(buffer, sizeof(buffer) - 1);
         if (length <= 0) continue;
         buffer[length] = '\0';
         if (strstr(buffer, "\"pong\"") != nullptr) {
+            if (discovery_running_) {
+                discovered_host_ = sender;
+                discovery_found_ = true;
+                discovery_running_ = false;
+                setHost(sender);
+                ++discovery_revision_;
+                Serial.printf("[FocuserUDP] Discovered daemon at %s\n",
+                              sender.toString().c_str());
+            }
             status_.last_message_ms = millis();
             status_.connected = true;
         }
@@ -148,6 +195,17 @@ void UdpFocuserTransport::poll()
     receiveCommandReply();
 
     const uint32_t now = millis();
+    if (discovery_running_) {
+        if (now - discovery_started_ms_ >= 2500) {
+            discovery_running_ = false;
+            discovery_found_ = false;
+            ++discovery_revision_;
+            Serial.println("[FocuserUDP] Discovery timed out");
+        } else if (now - last_discovery_ping_ms_ >= 350) {
+            last_discovery_ping_ms_ = now;
+            sendDiscoveryPing();
+        }
+    }
     if (now - last_ping_ms_ >= config::PING_INTERVAL_MS) {
         last_ping_ms_ = now;
         sendCommand("{\"ping\":1}");

@@ -31,6 +31,7 @@ TouchFocus (ESP32-P4 + ESP32-C6)
 - STOP on release and a daemon-side heartbeat watchdog
 - HOME control and live position/connection state
 - Wi-Fi scan, password entry and persistent credentials
+- Automatic `focuserd` discovery on the current Wi-Fi subnet
 - Direct BLE connection through a Raspberry Pi BlueZ bridge
 - Wi-Fi, BLE, SSID, IP address and signal indicators
 - COLOR and red astronomy NIGHT modes
@@ -182,6 +183,12 @@ are not deleted.
 See [protocol.md](protocol.md). BLE and Wi-Fi carry the same JSON application
 commands. Continuous jog is protected by a 350 ms daemon watchdog; if
 heartbeats stop, the daemon stops the motor.
+
+On the CONNECTION screen, **FIND** sends the existing `{"ping":1}` command to
+the calculated broadcast address of the current Wi-Fi subnet. `focuserd`
+already replies to the sender with `{"pong":1}`; TouchFocus takes the reply
+source as the daemon address and stores it in NVS. Manual IP entry remains
+available as a fallback.
 
 ## Power-management limitations
 
