@@ -1222,7 +1222,7 @@ void build_main_screen()
     lv_obj_add_event_cb(home_button, home_event, LV_EVENT_CLICKED, nullptr);
     lv_obj_align(home_button, LV_ALIGN_TOP_MID, 0, 438);
 
-    // Stylized side view of the focuser. The black extension grows from the
+    // Stylized side view of the focuser. The outlined extension grows from the
     // fixed outlined body according to position_mm / max_travel_mm.
     lv_obj_t *gauge_body = lv_obj_create(main_screen);
     lv_obj_set_pos(gauge_body, 42, 552);
@@ -1237,9 +1237,10 @@ void build_main_screen()
     focuser_gauge_extension = lv_obj_create(main_screen);
     lv_obj_set_pos(focuser_gauge_extension, 106, 568);
     lv_obj_set_size(focuser_gauge_extension, 1, 44);
-    lv_obj_set_style_bg_color(focuser_gauge_extension, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(focuser_gauge_extension, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(focuser_gauge_extension, 0, 0);
+    lv_obj_set_style_bg_opa(focuser_gauge_extension, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(focuser_gauge_extension, 3, 0);
+    lv_obj_set_style_border_color(focuser_gauge_extension,
+                                  lv_color_hex(0x8EA5B8), 0);
     lv_obj_set_style_radius(focuser_gauge_extension, 0, 0);
     lv_obj_set_style_pad_all(focuser_gauge_extension, 0, 0);
     lv_obj_clear_flag(focuser_gauge_extension, LV_OBJ_FLAG_SCROLLABLE);
@@ -1247,8 +1248,7 @@ void build_main_screen()
     focuser_gauge_marker = lv_obj_create(main_screen);
     lv_obj_set_pos(focuser_gauge_marker, 81, 594);
     lv_obj_set_size(focuser_gauge_marker, 50, 50);
-    lv_obj_set_style_bg_color(focuser_gauge_marker, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(focuser_gauge_marker, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(focuser_gauge_marker, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(focuser_gauge_marker, 3, 0);
     lv_obj_set_style_border_color(focuser_gauge_marker, lv_color_hex(0x8EA5B8), 0);
     lv_obj_set_style_radius(focuser_gauge_marker, LV_RADIUS_CIRCLE, 0);
