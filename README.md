@@ -20,8 +20,6 @@ TouchFocus (ESP32-P4 + ESP32-C6)
         stepper motor
 ```
 
-![TouchFocus user interface](Untitled.png)
-
 ## Current features
 
 - Portrait 480 x 800 LVGL touchscreen interface
@@ -30,6 +28,7 @@ TouchFocus (ESP32-P4 + ESP32-C6)
 - Hold-to-move IN/OUT with fine movement and faster jog after two seconds
 - STOP on release and a daemon-side heartbeat watchdog
 - HOME control and live position/connection state
+- Graphical focuser extension gauge scaled to the configured maximum travel
 - Wi-Fi scan, password entry and persistent credentials
 - Automatic `focuserd` discovery on the current Wi-Fi subnet
 - Direct BLE connection through a Raspberry Pi BlueZ bridge

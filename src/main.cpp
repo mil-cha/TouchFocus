@@ -28,6 +28,8 @@ namespace {
 
 lv_obj_t *status_label = nullptr;
 lv_obj_t *position_label = nullptr;
+lv_obj_t *focuser_gauge_extension = nullptr;
+lv_obj_t *focuser_gauge_marker = nullptr;
 lv_obj_t *main_screen = nullptr;
 lv_obj_t *settings_screen = nullptr;
 lv_obj_t *edit_presets_screen = nullptr;
@@ -387,10 +389,31 @@ void motion_event(lv_event_t *event)
     }
 }
 
+void update_focuser_gauge(const touchfocus::FocuserStatus &state)
+{
+    if (!focuser_gauge_extension || !focuser_gauge_marker) return;
+
+    constexpr lv_coord_t extension_x = 170;
+    constexpr lv_coord_t extension_max_width = 230;
+    constexpr lv_coord_t marker_diameter = 50;
+    float ratio = 0.0F;
+    if (state.has_position && state.max_travel_mm > 0.0F) {
+        ratio = state.position_mm / state.max_travel_mm;
+        if (ratio < 0.0F) ratio = 0.0F;
+        if (ratio > 1.0F) ratio = 1.0F;
+    }
+
+    const lv_coord_t width = static_cast<lv_coord_t>(ratio * extension_max_width);
+    lv_obj_set_width(focuser_gauge_extension, width > 0 ? width : 1);
+    lv_obj_set_x(focuser_gauge_marker,
+                 extension_x + width - marker_diameter / 2);
+}
+
 void focuser_ui_poll(lv_timer_t *)
 {
     focuser.poll();
     const touchfocus::FocuserStatus &state = focuser.status();
+    update_focuser_gauge(state);
 
     if (state.has_config && state.config_revision != setup_config_revision_seen &&
         setup_fields[0] != nullptr) {
@@ -1202,6 +1225,39 @@ void build_main_screen()
                                           lv_color_hex(0x8A4B16), 190, 86);
     lv_obj_add_event_cb(home_button, home_event, LV_EVENT_CLICKED, nullptr);
     lv_obj_align(home_button, LV_ALIGN_TOP_MID, 0, 438);
+
+    // Stylized side view of the focuser. The black extension grows from the
+    // fixed outlined body according to position_mm / max_travel_mm.
+    lv_obj_t *gauge_body = lv_obj_create(main_screen);
+    lv_obj_set_pos(gauge_body, 42, 552);
+    lv_obj_set_size(gauge_body, 128, 76);
+    lv_obj_set_style_bg_opa(gauge_body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(gauge_body, 3, 0);
+    lv_obj_set_style_border_color(gauge_body, lv_color_hex(0x8EA5B8), 0);
+    lv_obj_set_style_radius(gauge_body, 0, 0);
+    lv_obj_set_style_pad_all(gauge_body, 0, 0);
+    lv_obj_clear_flag(gauge_body, LV_OBJ_FLAG_SCROLLABLE);
+
+    focuser_gauge_extension = lv_obj_create(main_screen);
+    lv_obj_set_pos(focuser_gauge_extension, 170, 568);
+    lv_obj_set_size(focuser_gauge_extension, 1, 44);
+    lv_obj_set_style_bg_color(focuser_gauge_extension, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(focuser_gauge_extension, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(focuser_gauge_extension, 0, 0);
+    lv_obj_set_style_radius(focuser_gauge_extension, 0, 0);
+    lv_obj_set_style_pad_all(focuser_gauge_extension, 0, 0);
+    lv_obj_clear_flag(focuser_gauge_extension, LV_OBJ_FLAG_SCROLLABLE);
+
+    focuser_gauge_marker = lv_obj_create(main_screen);
+    lv_obj_set_pos(focuser_gauge_marker, 145, 594);
+    lv_obj_set_size(focuser_gauge_marker, 50, 50);
+    lv_obj_set_style_bg_color(focuser_gauge_marker, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(focuser_gauge_marker, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(focuser_gauge_marker, 3, 0);
+    lv_obj_set_style_border_color(focuser_gauge_marker, lv_color_hex(0x8EA5B8), 0);
+    lv_obj_set_style_radius(focuser_gauge_marker, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_all(focuser_gauge_marker, 0, 0);
+    lv_obj_clear_flag(focuser_gauge_marker, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *in_button = create_button(main_screen, "IN", nullptr,
                                         lv_color_hex(0x276749), 190, 82);
