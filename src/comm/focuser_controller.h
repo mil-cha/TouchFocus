@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ifocuser_transport.h"
+#include "../config/network_config.h"
 
 namespace touchfocus {
 
@@ -28,6 +29,8 @@ public:
     bool discoveryFound() const { return transport_.discoveryFound(); }
     IPAddress discoveredHost() const { return transport_.discoveredHost(); }
     uint32_t discoveryRevision() const { return transport_.discoveryRevision(); }
+    void setJogSpeed(int speed);
+    int jogSpeed() const { return jog_speed_; }
 
     const FocuserStatus &status() const { return transport_.status(); }
     LocalMotion motion() const { return motion_; }
@@ -44,6 +47,7 @@ private:
     uint32_t move_started_ms_ = 0;
     uint32_t homing_since_ms_ = 0;
     bool fast_motion_ = false;
+    int jog_speed_ = config::DEFAULT_JOG_SPEED;
 };
 
 }  // namespace touchfocus

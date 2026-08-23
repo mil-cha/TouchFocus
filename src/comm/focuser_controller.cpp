@@ -6,6 +6,12 @@
 
 namespace touchfocus {
 
+void FocuserController::setJogSpeed(int speed)
+{
+    jog_speed_ = constrain(speed, config::MIN_JOG_SPEED,
+                           config::MAX_JOG_SPEED);
+}
+
 void FocuserController::begin()
 {
     transport_.begin();
@@ -20,7 +26,7 @@ void FocuserController::poll()
         now - move_started_ms_ >= config::MOVE_ACCELERATE_AFTER_MS) {
         fast_motion_ = true;
         Serial.printf("[Focuser] Hold acceleration: continuous jog speed %d\n",
-                      config::JOG_SPEED);
+                      jog_speed_);
         sendMove();
     }
     if ((motion_ == LocalMotion::In || motion_ == LocalMotion::Out) &&
@@ -39,7 +45,7 @@ void FocuserController::sendMove()
     if (fast_motion_) {
         const char *direction = motion_ == LocalMotion::In ? "IN" : "OUT";
         snprintf(json, sizeof(json), "{\"jog\":\"%s\",\"speed\":%d}",
-                 direction, config::JOG_SPEED);
+                 direction, jog_speed_);
         transport_.sendCommand(json);
         last_move_ms_ = millis();
         return;

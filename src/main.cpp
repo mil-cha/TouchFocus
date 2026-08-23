@@ -48,7 +48,7 @@ lv_obj_t *main_preset_labels[9] = {};
 lv_obj_t *preset_edit_labels[9] = {};
 char preset_names[9][17] = {};
 uint8_t preset_being_edited = 0;
-lv_obj_t *setup_fields[4] = {};
+lv_obj_t *setup_fields[5] = {};
 lv_obj_t *setup_keyboard = nullptr;
 lv_obj_t *setup_calculated = nullptr;
 lv_obj_t *setup_result = nullptr;
@@ -72,6 +72,7 @@ constexpr uint32_t IDLE_SLEEP_AFTER_MS = 60000;
 constexpr uint8_t WAKE_BUTTON_PIN = 33;
 bool wake_button_pressed = false;
 bool wake_lock_enabled = true;
+int maximum_jog_speed = touchfocus::config::DEFAULT_JOG_SPEED;
 void stop_motion_on_wake_release();
 
 extern "C" bool touchfocus_touch_activity(bool pressed)
@@ -468,6 +469,11 @@ void load_screen_settings()
     display_off_after_ms = preferences.getUInt("disp_timeout", 30000);
     wake_lock_enabled = preferences.getBool("wake_lock", true);
     night_mode = preferences.getBool("night", false);
+    maximum_jog_speed = preferences.getInt(
+        "jog_speed", touchfocus::config::DEFAULT_JOG_SPEED);
+    maximum_jog_speed = constrain(maximum_jog_speed,
+                                  touchfocus::config::MIN_JOG_SPEED,
+                                  touchfocus::config::MAX_JOG_SPEED);
     preferences.end();
 }
 
@@ -479,6 +485,7 @@ void save_screen_settings()
         preferences.putUInt("disp_timeout", display_off_after_ms);
         preferences.putBool("wake_lock", wake_lock_enabled);
         preferences.putBool("night", night_mode);
+        preferences.putInt("jog_speed", maximum_jog_speed);
         preferences.end();
     }
     board_p4_backlight(true);
@@ -593,10 +600,16 @@ void save_focuser_setup(lv_event_t *event)
     const int microsteps = atoi(lv_textarea_get_text(setup_fields[1]));
     const float travel = atof(lv_textarea_get_text(setup_fields[2]));
     const float maximum = atof(lv_textarea_get_text(setup_fields[3]));
-    if (motor < 1 || microsteps < 1 || travel <= 0.0F || maximum <= 0.0F) {
+    const int jog_speed = atoi(lv_textarea_get_text(setup_fields[4]));
+    if (motor < 1 || microsteps < 1 || travel <= 0.0F || maximum <= 0.0F ||
+        jog_speed < touchfocus::config::MIN_JOG_SPEED ||
+        jog_speed > touchfocus::config::MAX_JOG_SPEED) {
         lv_label_set_text(setup_result, "Invalid values - not saved");
         return;
     }
+    maximum_jog_speed = jog_speed;
+    focuser.setJogSpeed(maximum_jog_speed);
+    save_screen_settings();
     char calculated[48];
     snprintf(calculated, sizeof(calculated), "Calculated: %.3f steps/mm",
              static_cast<double>(motor * microsteps / travel));
@@ -1332,19 +1345,23 @@ void build_focuser_setup_screen()
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
 
     static const char *labels[] = {"Motor steps/rev", "Microsteps",
-        "Travel per motor rev (mm)", "Maximum travel (mm)"};
-    for (int i = 0; i < 4; ++i) {
+        "Travel per motor rev (mm)", "Maximum travel (mm)",
+        "Maximum jog speed (1-6)"};
+    for (int i = 0; i < 5; ++i) {
         lv_obj_t *label = lv_label_create(focuser_setup_screen);
         lv_label_set_text(label, labels[i]);
-        lv_obj_align(label, LV_ALIGN_TOP_LEFT, 30, 88 + i * 105);
+        lv_obj_align(label, LV_ALIGN_TOP_LEFT, 30, 76 + i * 86);
         setup_fields[i] = lv_textarea_create(focuser_setup_screen);
         lv_textarea_set_one_line(setup_fields[i], true);
         lv_textarea_set_max_length(setup_fields[i], 12);
-        lv_obj_set_size(setup_fields[i], 420, 52);
-        lv_obj_align(setup_fields[i], LV_ALIGN_TOP_MID, 0, 112 + i * 105);
+        lv_obj_set_size(setup_fields[i], 420, 50);
+        lv_obj_align(setup_fields[i], LV_ALIGN_TOP_MID, 0, 98 + i * 86);
         lv_obj_add_event_cb(setup_fields[i], show_setup_keyboard,
                             LV_EVENT_FOCUSED, nullptr);
     }
+    char jog_value[8];
+    snprintf(jog_value, sizeof(jog_value), "%d", maximum_jog_speed);
+    lv_textarea_set_text(setup_fields[4], jog_value);
     setup_calculated = lv_label_create(focuser_setup_screen);
     lv_label_set_text(setup_calculated, "Calculated: -- steps/mm");
     lv_obj_align(setup_calculated, LV_ALIGN_TOP_MID, 0, 535);
@@ -1611,6 +1628,7 @@ void setup()
     load_wifi_credentials();
     load_preset_names();
     load_screen_settings();
+    focuser.setJogSpeed(maximum_jog_speed);
 
     IPAddress configured_focuser_ip;
     if (!configured_focuser_ip.fromString(saved_focuser_ip)) {

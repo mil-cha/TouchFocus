@@ -26,6 +26,7 @@ TouchFocus (ESP32-P4 + ESP32-C6)
 - Nine presets: short press moves, long press (900 ms) saves the current position
 - Editable and persistent preset names
 - Hold-to-move IN/OUT with fine movement and faster jog after two seconds
+- Persistent maximum fast-jog speed setting (levels 1-6)
 - STOP on release and a daemon-side heartbeat watchdog
 - HOME control and live position/connection state
 - Graphical focuser extension gauge scaled to the configured maximum travel

@@ -15,9 +15,10 @@ constexpr uint32_t PING_INTERVAL_MS = 1000;
 constexpr uint32_t MOVE_REPEAT_MS = 40;
 constexpr int DEFAULT_MOVE_STEPS = 2;
 constexpr uint32_t MOVE_ACCELERATE_AFTER_MS = 2000;
-// focuserd goto() uses a continuous ~0.6 ms step period for preset moves.
-// speed=3 gives the daemon's jog loop ~0.667 ms step timing, close to presets.
+// User-adjustable fast-jog range. Start conservatively at 4 (~0.5 ms/step).
 constexpr uint32_t JOG_HEARTBEAT_MS = 100;
-constexpr int JOG_SPEED = 3;
+constexpr int DEFAULT_JOG_SPEED = 4;
+constexpr int MIN_JOG_SPEED = 1;
+constexpr int MAX_JOG_SPEED = 6;
 
 }  // namespace touchfocus::config
