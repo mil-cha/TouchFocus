@@ -8,26 +8,32 @@ with INDI/KStars/Ekos.
 
 TouchFocus also provides basic direct OnStep/OnStepX mount control over the
 standard LX200 TCP channel: hold-to-slew N/S/E/W motion with axis stop on
-release, plus manual slew-rate selection.
+release, manual slew-rate selection, mount status and common setup actions.
 
 ```text
 TouchFocus (ESP32-P4 + ESP32-C6)
-              |
-         BLE or Wi-Fi
-              |
-        Raspberry Pi 5
-              |
-           focuserd
-              |
-           TMC2209
-              |
-        stepper motor
+       |                    |
+  BLE or Wi-Fi          Wi-Fi / TCP
+       |                    |
+ Raspberry Pi 5        OnStep / OnStepX
+       |                    |
+    focuserd             telescope mount
+       |
+    TMC2209
+       |
+ stepper motor
 ```
 
 ## Current features
 
 - Portrait 480 x 800 LVGL touchscreen interface
+- Common status bar on every screen with screen name, SSID, IP address, NTP
+  time, battery placeholder, Wi-Fi signal and Wi-Fi/BLE state
+- Circular swipe navigation with FOCUSER and MOUNT CONTROL adjacent
 - Direct OnStep mount control over TCP port 9999
+- Hold-to-slew N/S/E/W controls, selectable slew rate and stop on release
+- OnStep altitude, azimuth and local-time display
+- OnStep Back and Spiral commands plus location, time, tracking, home and park setup
 - Nine presets: short press moves, long press (900 ms) saves the current position
 - Editable and persistent preset names
 - Hold-to-move IN/OUT with fine movement and faster jog after three seconds
@@ -40,8 +46,11 @@ TouchFocus (ESP32-P4 + ESP32-C6)
 - Direct BLE connection through a Raspberry Pi BlueZ bridge
 - Wi-Fi, BLE, SSID, IP address and signal indicators
 - COLOR and red astronomy NIGHT modes
-- Configurable display timeout and optional GPIO33 WAKE interlock
+- Configurable display timeout and optional active-HIGH GPIO33 WAKE interlock
 - Editable focuser mechanical calibration
+- Optional DS18B20 temperature compensation handled by `focuserd`
+- Password-protected Wi-Fi OTA support
+- Native INDI focuser driver with nine presets and step/mm display
 - Persistent settings in ESP32 NVS
 
 ## Hardware
@@ -70,31 +79,50 @@ The project deliberately pins pioarduino platform-espressif32 to
 `55.03.36-1`. Nearby versions have caused boot loops on this ES hardware. Do
 not update the platform casually.
 
-## Physical WAKE button
+## Capacitive WAKE input
 
-Connect a normally-open momentary button between GPIO33 and GND:
+The current firmware expects an active-HIGH signal from a TTP223 capacitive
+touch module on GPIO33:
 
 ```text
-GPIO33 ---- momentary button ---- GND
+TouchFocus 3.3 V ---- TTP223 VCC
+TouchFocus GND   ---- TTP223 GND
+TouchFocus GPIO33 --- TTP223 OUT
 ```
 
-The internal pull-up is enabled. When the WAKE interlock is active, pressing
-WAKE turns on the display, touch is accepted only while WAKE remains held, and
-releasing it during IN/OUT sends STOP. The interlock can be disabled in Screen
-Settings. The first touch after display-off is always consumed as a wake-only
-event and cannot activate a motor command.
+GPIO33 uses an internal pull-down. A red indicator appears in the upper corner
+of every screen while the input is HIGH. When the WAKE interlock is active,
+touching the external sensor turns on the display, touchscreen commands are
+accepted only while its output remains HIGH, and releasing it during IN/OUT
+sends STOP. The interlock can be disabled in SCREEN SETTINGS. The first
+touchscreen event after display-off is consumed as a wake-only event and
+cannot activate a motor command.
 
 ## User interface navigation
 
 ```text
-EDIT PRESETS <- MAIN -> SETTINGS -> FOCUSER SETUP -> SCREEN SETTINGS
+FOCUSER -> MOUNT CONTROL -> ONSTEP SETUP -> CONNECTION
+   ^                                            |
+   |                                            v
+FOCUSER SETUP <- EDIT PRESETS <- SCREEN SETTINGS
 ```
 
-- **MAIN** — P1-P9, IN, OUT, HOME, position and connection state
+- **FOCUSER** — P1-P9, IN, OUT, HOME, immediate STOP, extension gauge,
+  position and connection state
+- **MOUNT CONTROL** — hold-to-slew directional pad, slower/faster rate,
+  altitude, azimuth, local time, Back and Spiral
+- **ONSTEP SETUP** — location, NTP time, tracking, home, park and optional
+  direction swaps
+- **CONNECTION** — Wi-Fi, focuser discovery/address, BLE and OnStep address
+- **SCREEN SETTINGS** — NIGHT/COLOR, brightness, display timeout, WAKE
+  interlock and OTA
 - **EDIT PRESETS** — rename P1-P9
-- **SETTINGS** — Wi-Fi and BLE configuration
-- **FOCUSER SETUP** — mechanical calibration, jog speed and temperature compensation
-- **SCREEN SETTINGS** — NIGHT/COLOR, display timeout and WAKE interlock
+- **FOCUSER SETUP** — mechanical calibration, jog speed and temperature
+  compensation
+
+Swiping left follows the order above and wraps from FOCUSER SETUP back to
+FOCUSER. Swiping right follows the same ring in reverse. MOUNT CONTROL does
+not automatically return to the focuser screen after the general UI timeout.
 
 ## Building the firmware
 
@@ -161,6 +189,19 @@ Successful startup prints:
 
 The device appears in TouchFocus as `TouchFocus-RPi`. BLE currently operates
 without a PIN or bonding; use it only where that security model is acceptable.
+
+## OnStep / OnStepX mount control
+
+TouchFocus connects to the standard OnStep command channel on TCP port 9999.
+The default station-mode address is `192.168.88.60`; the address is editable
+on CONNECTION and stored in NVS. An OnStep access point commonly uses
+`192.168.0.60` instead.
+
+Directional commands are active only while a sector is held. Releasing a
+sector sends the corresponding axis-stop command, while normal sidereal
+tracking remains under OnStep control. Leaving MOUNT CONTROL also stops any
+active manual slew. See [onstep_protocol.md](onstep_protocol.md) for the
+implemented LX200/OnStep commands.
 
 ## Mechanical configuration
 
@@ -234,6 +275,15 @@ already replies to the sender with `{"pong":1}`; TouchFocus takes the reply
 source as the daemon address and stores it in NVS. Manual IP entry remains
 available as a fallback.
 
+## INDI driver
+
+The native C++ driver in [`TouchFocusINDI/`](TouchFocusINDI/) exposes focuser
+position, absolute and relative motion, abort, sync, maximum position, nine
+presets and temperature-compensation controls to INDI/KStars/Ekos. It talks to
+the local `focuserd` command server rather than accessing Raspberry Pi GPIO
+directly. CMake installation and Debian package instructions are documented in
+[`TouchFocusINDI/README.md`](TouchFocusINDI/README.md).
+
 ## Power-management limitations
 
 The backlight can turn off automatically and wake by touch or GPIO33. This is a
@@ -244,6 +294,10 @@ The board documents an IP5306 charger but no verified battery-voltage ADC or
 IP5306 telemetry connection to the P4. The status bar therefore displays
 battery state as unavailable (`--`) instead of inventing a percentage. Real
 measurement requires a verified IP5306 I2C connection or voltage-sense hardware.
+
+The side power button is wired directly to the IP5306 `KEY` input. Its long
+press shutdown timing is therefore controlled by the power-management hardware
+and cannot currently be shortened by the ESP32-P4 firmware.
 
 ### Wi-Fi OTA firmware update
 
@@ -269,22 +323,26 @@ TouchFocus/
 |-- boards/                 PlatformIO ESP32-P4 ES board definition
 |-- lib/                    vendored BSP and touch support
 |-- reference/              Raspberry Pi and legacy sources
+|-- TouchFocusINDI/         native INDI driver and Debian packaging
 |-- src/
 |   |-- comm/               controller, UDP, BLE and transport selection
 |   |-- config/             network and timing defaults
+|   |-- mount/              OnStep TCP/LX200 integration
 |   |-- lvgl_glue.c         verified display/touch integration
 |   `-- main.cpp            UI and settings
 |-- lv_conf.h               LVGL configuration
 |-- platformio.ini          pinned build environment
-`-- protocol.md             communication protocol
+|-- onstep_protocol.md      implemented OnStep commands
+`-- protocol.md             focuser communication protocol
 ```
 
 ## Project status
 
 TouchFocus is under active development. LCD, touch, PSRAM, LVGL, Wi-Fi/UDP,
-BLE, presets and real motor control have been tested on the target hardware.
-Treat the focuser as moving machinery: test new firmware unloaded and remain
-ready to remove motor power.
+BLE, presets, real focuser motor control and OnStep manual slew have been
+tested on the target hardware. The firmware and Raspberry Pi components should
+still be treated as an alpha release. Treat the focuser and mount as moving
+machinery: test new firmware unloaded and remain ready to remove motor power.
 
 ## License
 
