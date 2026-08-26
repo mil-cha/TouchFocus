@@ -23,6 +23,19 @@ bool readJsonNumber(const char *json, const char *key, double &value)
     return end != cursor + 1;
 }
 
+bool readJsonBool(const char *json, const char *key, bool &value)
+{
+    char pattern[32];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *cursor = strstr(json, pattern);
+    if (cursor == nullptr || (cursor = strchr(cursor, ':')) == nullptr) return false;
+    ++cursor;
+    while (*cursor == ' ') ++cursor;
+    if (strncmp(cursor, "true", 4) == 0 || *cursor == '1') { value = true; return true; }
+    if (strncmp(cursor, "false", 5) == 0 || *cursor == '0') { value = false; return true; }
+    return false;
+}
+
 }  // namespace
 
 void UdpFocuserTransport::setHost(const IPAddress &host)
@@ -124,7 +137,11 @@ void UdpFocuserTransport::parseStatusJson(const char *json)
                             readJsonNumber(json, "travel_per_rev_mm", travel) &&
                             readJsonNumber(json, "max_travel_mm", max_travel) &&
                             readJsonNumber(json, "steps_per_mm", steps_mm);
-    if (!has_steps && !has_mm && !has_config) return;
+    const bool has_temp_payload = strstr(json, "\"temperature_") != nullptr ||
+                                  strstr(json, "\"temp_comp_") != nullptr ||
+                                  strstr(json, "\"temp_coefficient\"") != nullptr ||
+                                  strstr(json, "\"temp_hysteresis\"") != nullptr;
+    if (!has_steps && !has_mm && !has_config && !has_temp_payload) return;
 
     if (has_steps) status_.position_steps = static_cast<int32_t>(position);
     if (has_mm) status_.position_mm = static_cast<float>(position_mm);
@@ -139,6 +156,34 @@ void UdpFocuserTransport::parseStatusJson(const char *json)
         ++status_.config_revision;
         status_.config_ok = strstr(json, "\"config_ok\": true") != nullptr ||
                             strstr(json, "\"config_ok\":true") != nullptr;
+    }
+    double temperature = 0, coefficient = 0, hysteresis = 0;
+    bool enabled = false, active = false, temperature_valid = false;
+    if (readJsonBool(json, "temperature_valid", temperature_valid)) {
+        status_.has_temperature = temperature_valid;
+    }
+    if (readJsonNumber(json, "temperature_c", temperature)) {
+        status_.temperature_c = static_cast<float>(temperature);
+        status_.has_temperature = true;
+    }
+    if (readJsonBool(json, "temp_comp_enabled", enabled)) {
+        status_.temp_comp_enabled = enabled;
+    }
+    if (readJsonBool(json, "temp_comp_active", active)) {
+        status_.temp_comp_active = active;
+    }
+    const bool has_temp_config =
+        readJsonNumber(json, "temp_coefficient", coefficient) &&
+        readJsonNumber(json, "temp_hysteresis", hysteresis) &&
+        readJsonBool(json, "temp_comp_enabled", enabled);
+    if (has_temp_config) {
+        status_.temp_comp_enabled = enabled;
+        status_.temp_coefficient = static_cast<float>(coefficient);
+        status_.temp_hysteresis_c = static_cast<float>(hysteresis);
+        status_.has_temp_config = true;
+        status_.temp_config_ok = strstr(json, "\"temp_config_ok\":true") != nullptr ||
+                                 strstr(json, "\"temp_config_ok\": true") != nullptr;
+        ++status_.temp_config_revision;
     }
     status_.last_message_ms = millis();
     status_.connected = true;

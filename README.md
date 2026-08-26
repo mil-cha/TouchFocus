@@ -6,6 +6,10 @@ handcontroller sends commands to `focuserd` running on a Raspberry Pi, while
 the daemon remains responsible for the TMC2209, limits, homing and integration
 with INDI/KStars/Ekos.
 
+TouchFocus also provides basic direct OnStep/OnStepX mount control over the
+standard LX200 TCP channel: hold-to-slew N/S/E/W motion with axis stop on
+release, plus manual slew-rate selection.
+
 ```text
 TouchFocus (ESP32-P4 + ESP32-C6)
               |
@@ -23,9 +27,10 @@ TouchFocus (ESP32-P4 + ESP32-C6)
 ## Current features
 
 - Portrait 480 x 800 LVGL touchscreen interface
+- Direct OnStep mount control over TCP port 9999
 - Nine presets: short press moves, long press (900 ms) saves the current position
 - Editable and persistent preset names
-- Hold-to-move IN/OUT with fine movement and faster jog after two seconds
+- Hold-to-move IN/OUT with fine movement and faster jog after three seconds
 - Persistent maximum fast-jog speed setting (levels 1-6)
 - STOP on release and a daemon-side heartbeat watchdog
 - HOME control and live position/connection state
@@ -88,7 +93,7 @@ EDIT PRESETS <- MAIN -> SETTINGS -> FOCUSER SETUP -> SCREEN SETTINGS
 - **MAIN** — P1-P9, IN, OUT, HOME, position and connection state
 - **EDIT PRESETS** — rename P1-P9
 - **SETTINGS** — Wi-Fi and BLE configuration
-- **FOCUSER SETUP** — mechanical calibration stored by `focuserd`
+- **FOCUSER SETUP** — mechanical calibration, jog speed and temperature compensation
 - **SCREEN SETTINGS** — NIGHT/COLOR, display timeout and WAKE interlock
 
 ## Building the firmware
@@ -116,7 +121,7 @@ The display/touch BSP is vendored under `lib/guition-jc4880p4-bsp` from
 
 The daemon listens for JSON commands on UDP port 40000 and broadcasts status on
 UDP port 40001. The default Raspberry Pi address is `192.168.88.240`; change it
-in `src/config/network_config.h` when needed.
+on the CONNECTION screen when needed.
 
 Files in `reference/`:
 
@@ -177,6 +182,45 @@ SAVE on the Focuser Setup screen creates or updates:
 The write is atomic. Invalid values, changes while jogging and a maximum below
 the current physical position are rejected. Presets are stored separately and
 are not deleted.
+
+## DS18B20 temperature compensation
+
+Temperature compensation runs in `focuserd`, so it continues when TouchFocus
+disconnects. It is disabled by default and remains inactive when the sensor is
+missing or invalid. Existing mechanical values in `focuser_config.json` are
+preserved when the new daemon first starts.
+
+Use the DS18B20 in powered three-wire mode:
+
+```text
+DS18B20 VDD ---- Raspberry Pi 3.3 V
+DS18B20 GND ---- Raspberry Pi GND
+DS18B20 DQ  ---- free Raspberry Pi GPIO
+              |
+              +---- 4.7 kohm ---- 3.3 V
+```
+
+The daemon reads the standard Linux 1-Wire path
+`/sys/bus/w1/devices/28-*/w1_slave`; it does not require an additional Python
+package. For example, to use free BCM GPIO4 on current Raspberry Pi OS, add
+this line to `/boot/firmware/config.txt` and reboot:
+
+```text
+dtoverlay=w1-gpio,gpiopin=4
+```
+
+Verify the chosen GPIO is unused by the rest of the installation first. The
+reference daemon already uses BCM 17 (STEP), 27 (DIR), 22 (ENABLE) and 15
+(buzzer).
+
+On FOCUSER SETUP, set the measured coefficient in steps per degree Celsius,
+the temperature hysteresis, and enable compensation. A manual move, HOME,
+preset or position sync invalidates the old reference; after the motor has
+been idle, the daemon establishes a new temperature/position reference.
+Corrections are evaluated every 30 seconds, limited to 500 steps per cycle,
+and always clamped to the configured focuser travel. Do not enable this option
+until the coefficient and its sign have been calibrated for the actual optical
+system.
 
 ## Protocol
 

@@ -78,8 +78,12 @@ void FocuserController::stop()
 {
     motion_ = LocalMotion::Idle;
     fast_motion_ = false;
-    // Repeat UDP STOP; the daemon heartbeat watchdog is the final failsafe.
-    transport_.sendCommand("{\"jog\":\"STOP\"}");
+    // Send the dedicated daemon abort first. Repetition covers an occasional
+    // lost UDP packet; BLE forwards the same application command.
+    transport_.sendCommand("{\"stop\":1}");
+    transport_.sendCommand("{\"stop\":1}");
+    transport_.sendCommand("{\"stop\":1}");
+    // Retain legacy jog/joystick stop packets for older daemon versions.
     transport_.sendCommand("{\"jog\":\"STOP\"}");
     transport_.sendCommand("{\"jog\":\"STOP\"}");
     transport_.sendCommand("{\"joyx\":2000,\"sw\":0}");
@@ -127,6 +131,25 @@ bool FocuserController::saveConfig(int motor_steps, int microsteps,
              "\"travel_per_rev_mm\":%.7f,\"max_travel_mm\":%.4f}}",
              motor_steps, microsteps, static_cast<double>(travel_per_rev_mm),
              static_cast<double>(max_travel_mm));
+    return transport_.sendCommand(json);
+}
+
+bool FocuserController::requestTemperatureConfig()
+{
+    return transport_.sendCommand("{\"get_temp_config\":1}");
+}
+
+bool FocuserController::saveTemperatureConfig(bool enabled,
+                                              float coefficient_steps_per_c,
+                                              float hysteresis_c)
+{
+    char json[160];
+    snprintf(json, sizeof(json),
+             "{\"set_temp_config\":{\"temp_comp_enabled\":%s,"
+             "\"temp_coefficient\":%.3f,\"temp_hysteresis\":%.3f}}",
+             enabled ? "true" : "false",
+             static_cast<double>(coefficient_steps_per_c),
+             static_cast<double>(hysteresis_c));
     return transport_.sendCommand(json);
 }
 

@@ -20,6 +20,15 @@ struct FocuserStatus {
     float travel_per_rev_mm = 1.313131F;
     float max_travel_mm = 42.0F;
     float steps_per_mm = 2436.923F;
+    bool has_temperature = false;
+    float temperature_c = 0.0F;
+    bool temp_comp_enabled = false;
+    bool temp_comp_active = false;
+    bool has_temp_config = false;
+    bool temp_config_ok = false;
+    uint32_t temp_config_revision = 0;
+    float temp_coefficient = 0.0F;
+    float temp_hysteresis_c = 0.3F;
 };
 
 class IFocuserTransport {

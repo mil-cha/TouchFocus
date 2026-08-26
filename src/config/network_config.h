@@ -13,8 +13,10 @@ constexpr uint16_t LOCAL_COMMAND_PORT = 40002;
 constexpr uint32_t STATUS_TIMEOUT_MS = 1500;
 constexpr uint32_t PING_INTERVAL_MS = 1000;
 constexpr uint32_t MOVE_REPEAT_MS = 40;
-constexpr int DEFAULT_MOVE_STEPS = 2;
-constexpr uint32_t MOVE_ACCELERATE_AFTER_MS = 2000;
+// Fine IN/OUT jog before hold acceleration: four steps per 40 ms packet.
+// This is twice the original two-step base speed on both Wi-Fi and BLE.
+constexpr int DEFAULT_MOVE_STEPS = 4;
+constexpr uint32_t MOVE_ACCELERATE_AFTER_MS = 3000;
 // User-adjustable fast-jog range. Start conservatively at 4 (~0.5 ms/step).
 constexpr uint32_t JOG_HEARTBEAT_MS = 100;
 constexpr int DEFAULT_JOG_SPEED = 4;

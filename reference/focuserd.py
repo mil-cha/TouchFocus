@@ -10,6 +10,8 @@ import os
 import select
 import signal
 import sys
+import glob
+from collections import deque
 
 # === GPIO PINS (pozor: u gpiod jsou to line offsets; na RPi často sedí s BCM, ale ne vždy) ===
 STEP_PIN = 17
@@ -18,6 +20,8 @@ EN_PIN = 22
 BUZZER_PIN = 15
 PRESET_FILE = "/var/lib/focuserd/focuser_presets.json"
 CONFIG_FILE = "/var/lib/focuserd/focuser_config.json"
+POSITION_FILE = "/var/lib/focuserd/focuser_position.json"
+W1_SENSOR_GLOB = "/sys/bus/w1/devices/28-*/w1_slave"
 
 EN_TIMEOUT = 2.0  # seconds before driver disables
 JOG_TIMEOUT = 0.35  # stop continuous TouchFocus jog if UDP heartbeats disappear
@@ -36,20 +40,48 @@ MAX_POS_MM = 42.0
 MIN_POS = int(round(MIN_POS_MM * STEPS_PER_MM))
 MAX_POS = int(round(MAX_POS_MM * STEPS_PER_MM))
 
+# Temperature compensation is deliberately disabled by default.  Existing
+# focuser_config.json files therefore keep their mechanical calibration and
+# cannot cause an unexpected move after this daemon is installed.
+TEMP_COMP_ENABLED = False
+TEMP_COMP_COEFFICIENT = 0.0       # focuser steps per degree Celsius
+TEMP_COMP_HYSTERESIS_C = 0.3
+TEMP_SAMPLE_INTERVAL = 5.0
+TEMP_COMP_INTERVAL = 30.0
+TEMP_COMP_QUIET_TIME = 2.0
+TEMP_COMP_MAX_CORRECTION = 500
+
 def config_dict():
     return {"motor_steps": MOTOR_STEPS, "microsteps": MICROSTEPS,
             "travel_per_rev_mm": TRAVEL_PER_REV_MM,
             "max_travel_mm": MAX_POS_MM, "steps_per_mm": STEPS_PER_MM}
 
+def temperature_config_dict():
+    return {"temp_comp_enabled": TEMP_COMP_ENABLED,
+            "temp_coefficient": TEMP_COMP_COEFFICIENT,
+            "temp_hysteresis": TEMP_COMP_HYSTERESIS_C}
+
+def persistent_config_dict():
+    values = config_dict()
+    values.update(temperature_config_dict())
+    return values
+
 def apply_config(values, persist=False):
     global MOTOR_STEPS, MICROSTEPS, TRAVEL_PER_REV_MM, MAX_POS_MM
     global STEPS_PER_MM, MAX_POS, position
-    motor_steps = int(values["motor_steps"])
-    microsteps = int(values["microsteps"])
-    travel = float(values["travel_per_rev_mm"])
-    max_travel = float(values["max_travel_mm"])
+    global TEMP_COMP_ENABLED, TEMP_COMP_COEFFICIENT, TEMP_COMP_HYSTERESIS_C
+    global temp_comp_rebase_requested
+    motor_steps = int(values.get("motor_steps", MOTOR_STEPS))
+    microsteps = int(values.get("microsteps", MICROSTEPS))
+    travel = float(values.get("travel_per_rev_mm", TRAVEL_PER_REV_MM))
+    max_travel = float(values.get("max_travel_mm", MAX_POS_MM))
+    temp_enabled = bool(values.get("temp_comp_enabled", TEMP_COMP_ENABLED))
+    temp_coefficient = float(values.get("temp_coefficient", TEMP_COMP_COEFFICIENT))
+    temp_hysteresis = float(values.get("temp_hysteresis", TEMP_COMP_HYSTERESIS_C))
     if not (1 <= motor_steps <= 10000 and 1 <= microsteps <= 256 and
-            0.0001 <= travel <= 1000.0 and 0.1 <= max_travel <= 1000.0):
+            0.0001 <= travel <= 1000.0 and 0.1 <= max_travel <= 1000.0 and
+            -100000.0 <= temp_coefficient <= 100000.0 and
+            0.05 <= temp_hysteresis <= 10.0):
         raise ValueError("configuration value outside allowed range")
     new_steps_per_mm = motor_steps * microsteps / travel
     old_position_mm = position / STEPS_PER_MM if STEPS_PER_MM > 0 else 0.0
@@ -60,11 +92,15 @@ def apply_config(values, persist=False):
     STEPS_PER_MM = new_steps_per_mm
     MAX_POS = int(round(MAX_POS_MM * STEPS_PER_MM))
     position = int(round(old_position_mm * STEPS_PER_MM))
+    TEMP_COMP_ENABLED = temp_enabled
+    TEMP_COMP_COEFFICIENT = temp_coefficient
+    TEMP_COMP_HYSTERESIS_C = temp_hysteresis
+    temp_comp_rebase_requested = True
     if persist:
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
         temporary = CONFIG_FILE + ".tmp"
         with open(temporary, "w") as f:
-            json.dump(config_dict(), f, indent=2)
+            json.dump(persistent_config_dict(), f, indent=2)
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, CONFIG_FILE)
@@ -76,9 +112,47 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r") as f:
             apply_config(json.load(f), persist=False)
-        print("[CONFIG] Loaded:", config_dict())
+        print("[CONFIG] Loaded:", persistent_config_dict())
     except Exception as e:
         print("[CONFIG] Invalid file; keeping legacy configuration:", e)
+
+def save_position(force=False):
+    global last_saved_position
+    current = int(position)
+    with position_file_lock:
+        if not force and current == last_saved_position:
+            return
+        try:
+            os.makedirs(os.path.dirname(POSITION_FILE), exist_ok=True)
+            temporary = POSITION_FILE + ".tmp"
+            with open(temporary, "w") as f:
+                json.dump({"position_steps": current}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, POSITION_FILE)
+            last_saved_position = current
+            print(f"[POSITION] Saved: {current}")
+        except Exception as e:
+            print("[POSITION] Save error:", e)
+
+def load_position():
+    global position, last_saved_position
+    if not os.path.exists(POSITION_FILE):
+        last_saved_position = int(position)
+        print("[POSITION] No saved position; starting at 0")
+        return
+    try:
+        with open(POSITION_FILE, "r") as f:
+            saved = int(json.load(f)["position_steps"])
+        if not MIN_POS <= saved <= MAX_POS:
+            raise ValueError("saved position is outside configured travel")
+        position = saved
+        last_saved_position = saved
+        print(f"[POSITION] Restored: {position}")
+    except Exception as e:
+        position = MIN_POS
+        last_saved_position = position
+        print("[POSITION] Invalid file; starting at minimum:", e)
 
 def steps_to_mm(steps):
     return steps / STEPS_PER_MM
@@ -88,13 +162,26 @@ def mm_to_steps(mm):
 
 # === State variables ===
 position = 0
+last_saved_position = 0
+position_file_lock = threading.Lock()
 abort_flag = False
 last_step_time = time.monotonic()
 current_joy_dir = None  # None, 0 (IN), 1 (OUT)
 current_joy_speed = 0
 jog_deadline = 0.0
 joy_stop_event = threading.Event()
+goto_thread = None
+goto_thread_lock = threading.Lock()
+temperature_c = None
+temperature_sensor_id = ""
+temperature_samples = deque(maxlen=5)
+temperature_lock = threading.Lock()
+temp_comp_active = False
+temp_comp_rebase_requested = True
+temp_comp_anchor_temperature = None
+temp_comp_anchor_position = 0
 load_config()
+load_position()
 
 # === Presets ===
 default_presets = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000]
@@ -179,6 +266,100 @@ def en_watchdog_loop():
             gpio.write(EN_PIN, 1)  # disable driver
         time.sleep(0.2)
 
+def request_temperature_rebase():
+    """Make the next quiet, valid reading the compensation reference."""
+    global temp_comp_rebase_requested, temp_comp_active
+    temp_comp_rebase_requested = True
+    temp_comp_active = False
+
+def read_ds18b20():
+    """Read the first Linux 1-Wire DS18B20 without extra Python packages."""
+    global temperature_sensor_id
+    paths = sorted(glob.glob(W1_SENSOR_GLOB))
+    if not paths:
+        temperature_sensor_id = ""
+        return None
+    path = paths[0]
+    with open(path, "r") as sensor_file:
+        lines = sensor_file.readlines()
+    if len(lines) < 2 or not lines[0].strip().endswith("YES"):
+        return None
+    marker = lines[1].find("t=")
+    if marker < 0:
+        return None
+    value = int(lines[1][marker + 2:].strip()) / 1000.0
+    if value < -55.0 or value > 125.0 or abs(value - 85.0) < 0.0001:
+        return None
+    temperature_sensor_id = os.path.basename(os.path.dirname(path))
+    return value
+
+def temperature_compensation_loop():
+    global temperature_c, temp_comp_active, temp_comp_rebase_requested
+    global temp_comp_anchor_temperature, temp_comp_anchor_position
+
+    last_sensor_log = 0.0
+    last_compensation = 0.0
+    while True:
+        now = time.monotonic()
+        try:
+            sample = read_ds18b20()
+        except (OSError, ValueError) as e:
+            sample = None
+            if now - last_sensor_log >= 60.0:
+                print("[TEMP] DS18B20 read error:", e)
+                last_sensor_log = now
+
+        with temperature_lock:
+            if sample is None:
+                temperature_samples.clear()
+                temperature_c = None
+            else:
+                temperature_samples.append(sample)
+                temperature_c = sum(temperature_samples) / len(temperature_samples)
+            averaged_temperature = temperature_c
+
+        if sample is None and now - last_sensor_log >= 60.0:
+            print("[TEMP] DS18B20 not found or reading invalid")
+            last_sensor_log = now
+
+        if not TEMP_COMP_ENABLED or averaged_temperature is None:
+            temp_comp_active = False
+            temp_comp_anchor_temperature = None
+            time.sleep(TEMP_SAMPLE_INTERVAL)
+            continue
+
+        motor_idle = (current_joy_dir not in (0, 1) and not abort_flag and
+                      now - last_step_time >= TEMP_COMP_QUIET_TIME)
+        if temp_comp_rebase_requested or temp_comp_anchor_temperature is None:
+            if motor_idle:
+                temp_comp_anchor_temperature = averaged_temperature
+                temp_comp_anchor_position = int(position)
+                temp_comp_rebase_requested = False
+                temp_comp_active = True
+                print(f"[TEMP] Compensation reference: {averaged_temperature:.2f} C, "
+                      f"position {temp_comp_anchor_position}")
+            time.sleep(TEMP_SAMPLE_INTERVAL)
+            continue
+
+        temp_comp_active = True
+        if motor_idle and now - last_compensation >= TEMP_COMP_INTERVAL:
+            delta_c = averaged_temperature - temp_comp_anchor_temperature
+            if abs(delta_c) >= TEMP_COMP_HYSTERESIS_C:
+                desired = int(round(temp_comp_anchor_position +
+                                    TEMP_COMP_COEFFICIENT * delta_c))
+                desired = max(MIN_POS, min(MAX_POS, desired))
+                correction = desired - int(position)
+                correction = max(-TEMP_COMP_MAX_CORRECTION,
+                                 min(TEMP_COMP_MAX_CORRECTION, correction))
+                if correction:
+                    target = int(position) + correction
+                    print(f"[TEMP] {averaged_temperature:.2f} C, delta {delta_c:+.2f} C, "
+                          f"correction {correction:+d} steps")
+                    goto(target, rebase_temperature=False)
+                last_compensation = time.monotonic()
+
+        time.sleep(TEMP_SAMPLE_INTERVAL)
+
 # === Stepper movement functions ===
 def do_step(direction, delay):
     global position, last_step_time
@@ -202,7 +383,14 @@ def do_step(direction, delay):
     position += 1 if direction else -1
     last_step_time = time.monotonic()
 
-def move(direction_str, steps):
+def move(direction_str, steps, rebase_temperature=True):
+    global abort_flag
+    if goto_thread is not None and goto_thread.is_alive():
+        emergency_stop(log_message=False)
+        wait_for_goto_stop()
+    abort_flag = False
+    if rebase_temperature:
+        request_temperature_rebase()
     direction = 0 if direction_str == "IN" else 1
     for _ in range(steps):
         if abort_flag:
@@ -213,8 +401,13 @@ def move(direction_str, steps):
             break
         do_step(direction, 0.0004)
 
-def goto(target):
+def goto(target, rebase_temperature=True, reset_abort=True):
     global position, abort_flag
+
+    if reset_abort:
+        abort_flag = False
+    if rebase_temperature:
+        request_temperature_rebase()
 
     try:
         target = int(target)
@@ -258,6 +451,9 @@ def goto(target):
 
 def home():
     global position
+    emergency_stop(log_message=False)
+    wait_for_goto_stop()
+    request_temperature_rebase()
     print("[HOME] Home set (reset position to 0).")
     beep(0.2)
     position = 0
@@ -267,6 +463,9 @@ def home():
 
 def sync(pos):
     global position
+    emergency_stop(log_message=False)
+    wait_for_goto_stop()
+    request_temperature_rebase()
     if pos < MIN_POS:
         position = MIN_POS
     elif pos > MAX_POS:
@@ -274,11 +473,70 @@ def sync(pos):
     else:
         position = pos
 
-def abort():
-    global abort_flag
+def emergency_stop(log_message=True):
+    global abort_flag, current_joy_dir, current_joy_speed, jog_deadline
+    was_active = (not abort_flag or current_joy_dir in (0, 1) or
+                  (goto_thread is not None and goto_thread.is_alive()))
     abort_flag = True
-    time.sleep(0.1)
-    abort_flag = False
+    current_joy_dir = None
+    current_joy_speed = 0
+    jog_deadline = 0.0
+    gpio.write(EN_PIN, 1)
+    request_temperature_rebase()
+    if log_message and was_active:
+        print("[STOP] Emergency stop")
+
+def abort():
+    emergency_stop()
+
+def wait_for_goto_stop(timeout=0.2):
+    worker = goto_thread
+    if worker is not None and worker.is_alive() and worker is not threading.current_thread():
+        worker.join(timeout)
+
+def is_motor_moving():
+    return (current_joy_dir in (0, 1) or
+            (goto_thread is not None and goto_thread.is_alive()))
+
+def position_persistence_loop():
+    """Persist a settled position without writing the SD card on every step."""
+    while True:
+        if (int(position) != last_saved_position and
+                not is_motor_moving() and
+                time.monotonic() - last_step_time >= 0.75):
+            save_position()
+        time.sleep(0.25)
+
+def tcp_status_line():
+    with temperature_lock:
+        current_temperature = temperature_c
+    temperature_valid = current_temperature is not None
+    temperature_value = current_temperature if temperature_valid else 0.0
+    return (f"STATUS {int(position)} {1 if is_motor_moving() else 0} "
+            f"{int(MAX_POS)} {1 if temperature_valid else 0} "
+            f"{temperature_value:.3f} {1 if TEMP_COMP_ENABLED else 0} "
+            f"{1 if temp_comp_active else 0} {TEMP_COMP_COEFFICIENT:.3f} "
+            f"{TEMP_COMP_HYSTERESIS_C:.3f} {STEPS_PER_MM:.6f}\n")
+
+def start_goto(target):
+    """Start a preset move without blocking the UDP emergency-stop path."""
+    global goto_thread, abort_flag
+    with goto_thread_lock:
+        if goto_thread is not None and goto_thread.is_alive():
+            print("[GOTO] Rejected: another GOTO is active")
+            return False
+        abort_flag = False
+
+        def worker():
+            try:
+                goto(target, reset_abort=False)
+            finally:
+                gpio.write(EN_PIN, 1)
+
+        goto_thread = threading.Thread(target=worker, daemon=True,
+                                       name="focuser-goto")
+        goto_thread.start()
+        return True
 
 # === Thread for joystick movement ===
 def joystick_mover():
@@ -308,19 +566,25 @@ def handle_client(conn):
             data = conn.recv(128).decode().strip()
             if not data:
                 break
-            print(f"Received: {data}")
+            # GETSTATUS is polled by INDI and would otherwise flood journald.
+            if data != "GETSTATUS":
+                print(f"Received: {data}")
             parts = data.split()
 
             try:
-                if data.startswith("GOTO"):
-                    goto(int(parts[1]))
-                    conn.sendall(b"OK\n")
-                elif data.startswith("GOTOMM"):
-                    goto(mm_to_steps(float(parts[1])))
-                    conn.sendall(b"OK\n")
-                elif data.startswith("MOVE"):
-                    move(parts[1], int(parts[2]))
-                    conn.sendall(b"OK\n")
+                if parts[0] == "GOTO":
+                    conn.sendall(b"OK\n" if start_goto(int(parts[1])) else b"BUSY\n")
+                elif parts[0] == "GOTOMM":
+                    target = mm_to_steps(float(parts[1]))
+                    conn.sendall(b"OK\n" if start_goto(target) else b"BUSY\n")
+                elif parts[0] == "MOVE":
+                    direction = parts[1].upper()
+                    ticks = max(0, int(parts[2]))
+                    if direction not in ("IN", "OUT"):
+                        conn.sendall(b"ERR\n")
+                    else:
+                        target = int(position) + (-ticks if direction == "IN" else ticks)
+                        conn.sendall(b"OK\n" if start_goto(target) else b"BUSY\n")
                 elif data == "HOME":
                     home()
                     conn.sendall(b"OK\n")
@@ -332,6 +596,18 @@ def handle_client(conn):
                     conn.sendall(b"OK\n")
                 elif data == "GETPOS":
                     conn.sendall(f"POS {position}\n".encode())
+                elif data == "GETSTATUS":
+                    conn.sendall(tcp_status_line().encode())
+                elif data.startswith("SETTEMPCOMP"):
+                    try:
+                        apply_config({"temp_comp_enabled": bool(int(parts[1])),
+                                      "temp_coefficient": float(parts[2]),
+                                      "temp_hysteresis": float(parts[3])},
+                                     persist=True)
+                        conn.sendall(b"OK\n")
+                    except Exception as e:
+                        print("[TEMP] TCP configuration rejected:", e)
+                        conn.sendall(b"ERR\n")
                 elif data.startswith("GETPRESET"):
                     try:
                         n = int(parts[1]) - 1
@@ -354,7 +630,7 @@ def handle_client(conn):
                     except Exception:
                         conn.sendall(b"ERR\n")
                 elif data == "LISTPRESETS":
-                    conn.sendall(f"PRESETS {' '.join(map(str, presets[:6]))}\n".encode())
+                    conn.sendall(f"PRESETS {' '.join(map(str, presets[:9]))}\n".encode())
                 elif data.startswith("STEP"):
                     try:
                         direction = int(parts[1])
@@ -401,7 +677,15 @@ def udp_position_broadcast():
     while True:
         try:
             pos_mm = steps_to_mm(position)
-            msg = json.dumps({"pos": position, "pos_mm": pos_mm})
+            with temperature_lock:
+                current_temperature = temperature_c
+            status = {"pos": position, "pos_mm": pos_mm,
+                      "temperature_valid": current_temperature is not None,
+                      "temp_comp_enabled": TEMP_COMP_ENABLED,
+                      "temp_comp_active": temp_comp_active}
+            if current_temperature is not None:
+                status["temperature_c"] = round(current_temperature, 3)
+            msg = json.dumps(status, separators=(",", ":"))
             udp_sock.sendto(msg.encode(), ("192.168.88.255", 40001))
 
             now = time.monotonic()
@@ -471,9 +755,36 @@ def udp_control_loop():
         try:
             cmd = json.loads(data.decode())
 
+            # Dedicated safety command.  It is handled by the UDP receive
+            # thread even while a preset GOTO runs in its worker thread.
+            if "stop" in cmd:
+                emergency_stop()
+                continue
+
             if "get_config" in cmd:
                 response = {"config": config_dict(), "config_ok": True}
                 udp_sock.sendto(json.dumps(response).encode(), addr)
+                continue
+
+            if "get_temp_config" in cmd:
+                response = {"temp_config": temperature_config_dict(),
+                            "temp_config_ok": True}
+                udp_sock.sendto(json.dumps(response, separators=(",", ":")).encode(), addr)
+                continue
+
+            if "set_temp_config" in cmd:
+                response = {"temp_config_ok": False}
+                try:
+                    if current_joy_dir in (0, 1):
+                        raise ValueError("motor is moving")
+                    apply_config(cmd["set_temp_config"], persist=True)
+                    response = {"temp_config": temperature_config_dict(),
+                                "temp_config_ok": True}
+                    print("[TEMP] Configuration saved:", temperature_config_dict())
+                except Exception as e:
+                    response["temp_config_error"] = str(e)
+                    print("[TEMP] Configuration rejected:", e)
+                udp_sock.sendto(json.dumps(response, separators=(",", ":")).encode(), addr)
                 continue
 
             if "set_config" in cmd:
@@ -496,10 +807,9 @@ def udp_control_loop():
                 jog = str(cmd.get("jog", "STOP")).upper()
 
                 if jog == "STOP":
-                    was_moving = current_joy_dir in (0, 1)
-                    current_joy_dir = None
-                    current_joy_speed = 0
-                    jog_deadline = 0.0
+                    was_moving = current_joy_dir in (0, 1) or \
+                                 (goto_thread is not None and goto_thread.is_alive())
+                    emergency_stop(log_message=False)
                     if was_moving:
                         print("[JOG] STOP")
                     continue
@@ -518,6 +828,7 @@ def udp_control_loop():
                     current_joy_speed = speed
                     jog_deadline = time.monotonic() + JOG_TIMEOUT
                     if changed:
+                        request_temperature_rebase()
                         print(f"[JOG] {jog}, speed={speed}")
                     continue
 
@@ -541,7 +852,7 @@ def udp_control_loop():
                 if 1 <= slot <= 9:
                     target = presets[slot - 1]
                     print(f"[PRESET] GOTO {slot} -> {target}")
-                    goto(target)
+                    start_goto(target)
                 else:
                     print(f"[PRESET] Invalid GOTO slot: {slot}")
                 continue
@@ -599,31 +910,31 @@ def udp_control_loop():
                 if "b2" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 2 -> {presets[1]}")
-                    goto(presets[1])
+                    start_goto(presets[1])
                 if "b3" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 3 -> {presets[2]}")
-                    goto(presets[2])
+                    start_goto(presets[2])
                 if "b4" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 4 -> {presets[3]}")
-                    goto(presets[3])
+                    start_goto(presets[3])
                 if "b5" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 5 -> {presets[4]}")
-                    goto(presets[4])
+                    start_goto(presets[4])
                 if "b6" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 6 -> {presets[5]}")
-                    goto(presets[5])
+                    start_goto(presets[5])
                 if "b7" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 7 -> {presets[6]}")
-                    goto(presets[6])
+                    start_goto(presets[6])
                 if "b8" in pressed:
                     preset_latch = True
                     print(f"[PRESET] GOTO 8 -> {presets[7]}")
-                    goto(presets[7])
+                    start_goto(presets[7])
 
             # SAVE presets (long press) - tyhle klidně bez latch (je to “akce”)
             if "b1_long" in pressed:
@@ -705,7 +1016,9 @@ def udp_control_loop():
 # --- graceful stop for systemd ---
 def _sigterm_handler(signum, frame):
     print("[INFO] SIGTERM received, shutting down...")
-    gpio.write(EN_PIN, 1)
+    emergency_stop(log_message=False)
+    wait_for_goto_stop()
+    save_position(force=True)
     gpio.close()
     sys.exit(0)
 
@@ -717,7 +1030,9 @@ if __name__ == "__main__":
         threading.Thread(target=en_watchdog_loop, daemon=True).start()
         threading.Thread(target=udp_control_loop, daemon=True).start()
         threading.Thread(target=joystick_mover, daemon=True).start()
+        threading.Thread(target=temperature_compensation_loop, daemon=True).start()
         threading.Thread(target=udp_position_broadcast, daemon=True).start()
+        threading.Thread(target=position_persistence_loop, daemon=True).start()
         socket_server()
     except KeyboardInterrupt:
         print("Exiting...")

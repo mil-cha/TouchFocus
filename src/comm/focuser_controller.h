@@ -15,14 +15,17 @@ public:
 
     void begin();
     void poll();
-    void moveIn(int steps = 2);
-    void moveOut(int steps = 2);
+    void moveIn(int steps = 4);
+    void moveOut(int steps = 4);
     void stop();
     bool goPreset(uint8_t preset);
     bool savePreset(uint8_t preset);
     bool requestConfig();
     bool saveConfig(int motor_steps, int microsteps, float travel_per_rev_mm,
                     float max_travel_mm);
+    bool requestTemperatureConfig();
+    bool saveTemperatureConfig(bool enabled, float coefficient_steps_per_c,
+                               float hysteresis_c);
     void home();
     bool findFocuser() { return transport_.startDiscovery(); }
     bool discoveryRunning() const { return transport_.discoveryRunning(); }
@@ -42,7 +45,7 @@ private:
 
     IFocuserTransport &transport_;
     LocalMotion motion_ = LocalMotion::Idle;
-    int move_steps_ = 2;
+    int move_steps_ = 4;
     uint32_t last_move_ms_ = 0;
     uint32_t move_started_ms_ = 0;
     uint32_t homing_since_ms_ = 0;

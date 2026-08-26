@@ -15,6 +15,14 @@ bool number(const char *json, const char *key, double &out) {
     const char *p = strstr(json, pattern); if (!p || !(p = strchr(p, ':'))) return false;
     char *end = nullptr; out = strtod(p + 1, &end); return end != p + 1;
 }
+bool boolean(const char *json, const char *key, bool &out) {
+    char pattern[32]; snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *p = strstr(json, pattern); if (!p || !(p = strchr(p, ':'))) return false;
+    do { ++p; } while (*p == ' ');
+    if (!strncmp(p, "true", 4) || *p == '1') { out = true; return true; }
+    if (!strncmp(p, "false", 5) || *p == '0') { out = false; return true; }
+    return false;
+}
 }
 BleFocuserTransport *BleFocuserTransport::active_ = nullptr;
 bool BleFocuserTransport::attach(BLEClient *client) {
@@ -59,6 +67,25 @@ void BleFocuserTransport::parse(const char *json) {
         status_.motor_steps=ms; status_.microsteps=micro; status_.travel_per_rev_mm=travel;
         status_.max_travel_mm=maximum; status_.steps_per_mm=spm; status_.has_config=true;
         ++status_.config_revision;
+    }
+    if (number(json, "temperature_c", v)) {
+        status_.temperature_c = static_cast<float>(v); status_.has_temperature = true;
+    }
+    bool enabled, active, temperature_valid;
+    if (boolean(json, "temperature_valid", temperature_valid))
+        status_.has_temperature = temperature_valid;
+    if (boolean(json, "temp_comp_enabled", enabled)) status_.temp_comp_enabled = enabled;
+    if (boolean(json, "temp_comp_active", active)) status_.temp_comp_active = active;
+    double coefficient, hysteresis;
+    if (number(json, "temp_coefficient", coefficient) &&
+        number(json, "temp_hysteresis", hysteresis) &&
+        boolean(json, "temp_comp_enabled", enabled)) {
+        status_.temp_comp_enabled = enabled;
+        status_.temp_coefficient = static_cast<float>(coefficient);
+        status_.temp_hysteresis_c = static_cast<float>(hysteresis);
+        status_.has_temp_config = true;
+        status_.temp_config_ok = strstr(json, "\"temp_config_ok\":true") != nullptr;
+        ++status_.temp_config_revision;
     }
     status_.last_message_ms = millis(); status_.connected = true;
 }
